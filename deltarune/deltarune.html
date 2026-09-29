@@ -1,0 +1,178 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+  <title>Deltarune Web Port</title>
+  <style>
+    * { box-sizing: border-box; touch-action: none; user-select: none; -webkit-user-select: none; }
+    html, body { 
+      margin: 0; padding: 0; width: 100vw; height: 100vh; 
+      background-color: #000; overflow: hidden; 
+      display: flex; justify-content: center; align-items: center; 
+    }
+
+    #game-viewport {
+      position: relative;
+      width: 100vw;
+      height: 100vh;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+    }
+
+    canvas {
+      position: absolute;
+      top: 0; left: 0;
+      width: 100vw; height: 100vh;
+      display: block;
+      image-rendering: pixelated;
+      image-rendering: crisp-edges;
+    }
+
+    #game-canvas { z-index: 1; background: #000; object-fit: contain; }
+    #ui-canvas { z-index: 2; pointer-events: auto; }
+  </style>
+</head>
+<body>
+
+  <div id="game-viewport">
+    <canvas id="game-canvas" width="640" height="480"></canvas>
+    <canvas id="ui-canvas" width="854" height="480"></canvas>
+  </div>
+
+  <script>
+    const spriteSheet = new Image();
+    spriteSheet.src = 'controls.png';
+
+    // Atlas mapping for controls.png
+    const SPRITES = {
+      joybase:  [{ x: 0, y: 0, w: 59, h: 59 }, { x: 60, y: 0, w: 59, h: 59 }], // Frame 1 = Crosshair ring
+      joystick: [{ x: 12, y: 138, w: 20, h: 20 }],
+      btn_z:    [{ x: 104, y: 0, w: 27, h: 29 }, { x: 104, y: 30, w: 27, h: 29 }],
+      btn_x:    [{ x: 132, y: 0, w: 27, h: 29 }, { x: 132, y: 30, w: 27, h: 29 }],
+      btn_c:    [{ x: 160, y: 0, w: 27, h: 29 }, { x: 160, y: 30, w: 27, h: 29 }],
+      icon:     [{ x: 0, y: 60, w: 25, h: 25 }]
+    };
+
+    // Controls layout tuned to widescreen target coordinates (854x480 space)
+    const state = {
+      zx: 550, zy: 325,         // Z Button (Bottom-Right)
+      xx: 635, xy: 265,         // X Button (Middle-Right)
+      cx: 720, cy: 205,         // C Button (Top-Right)
+      analog_posx: 30,          // Joystick Base X (Bottom-Left)
+      analog_posy: 255,         // Joystick Base Y (Bottom-Left)
+      button_scale: 2.8,        
+      analog_scale: 3.3,        
+      joystick_type: 1,         // Crosshair Ring Base
+      controls_opacity: 0.30    // Subtle dark transparency
+    };
+
+    // Calculate initial stick center
+    state.analog_center_x = state.analog_posx + (((59 * state.analog_scale) / 2) - ((20 * state.analog_scale) / 2));
+    state.analog_center_y = state.analog_posy + (((59 * state.analog_scale) / 2) - ((20 * state.analog_scale) / 2));
+
+    const keyState = { Z: 0, X: 0, C: 0 };
+    const uiCanvas = document.getElementById('ui-canvas');
+    const ctx = uiCanvas.getContext('2d');
+
+    function draw_sprite_ext(sprite, frame, x, y, scaleX, scaleY, opacity) {
+      if (!spriteSheet.complete || !spriteSheet.naturalWidth) return;
+      const s = sprite[frame] || sprite[0];
+      const destW = Math.floor(s.w * scaleX);
+      const destH = Math.floor(s.h * scaleY);
+      const destX = Math.floor(x);
+      const destY = Math.floor(y);
+
+      ctx.save();
+      ctx.imageSmoothingEnabled = false;
+      ctx.globalAlpha = opacity;
+      ctx.drawImage(spriteSheet, s.x, s.y, s.w, s.h, destX, destY, destW, destH);
+      ctx.restore();
+    }
+
+    function render() {
+      ctx.clearRect(0, 0, 854, 480);
+
+      // Render Top-Left Corner Settings/D-Pad Icon
+      draw_sprite_ext(SPRITES.icon, 0, 20, 15, 1.8, 1.8, 0.20);
+
+      // Render Crosshair Joystick Base & Inner Cap
+      draw_sprite_ext(SPRITES.joybase, state.joystick_type, state.analog_posx, state.analog_posy, state.analog_scale, state.analog_scale, state.controls_opacity);
+      draw_sprite_ext(SPRITES.joystick, 0, state.analog_center_x, state.analog_center_y, state.analog_scale, state.analog_scale, state.controls_opacity);
+
+      // Render Z, X, C Action Buttons
+      draw_sprite_ext(SPRITES.btn_z, keyState.Z, state.zx, state.zy, state.button_scale, state.button_scale, state.controls_opacity);
+      draw_sprite_ext(SPRITES.btn_x, keyState.X, state.xx, state.xy, state.button_scale, state.button_scale, state.controls_opacity);
+      draw_sprite_ext(SPRITES.btn_c, keyState.C, state.cx, state.cy, state.button_scale, state.button_scale, state.controls_opacity);
+
+      requestAnimationFrame(render);
+    }
+
+    function triggerKey(code, isPressed) {
+      const event = new KeyboardEvent(isPressed ? 'keydown' : 'keyup', { keyCode: code, which: code, bubbles: true });
+      document.dispatchEvent(event);
+    }
+
+    uiCanvas.addEventListener('touchstart', handleTouch, { passive: false });
+    uiCanvas.addEventListener('touchmove', handleTouch, { passive: false });
+    uiCanvas.addEventListener('touchend', resetTouch, { passive: false });
+
+    function handleTouch(e) {
+      e.preventDefault();
+      const rect = uiCanvas.getBoundingClientRect();
+      const scaleX = 854 / rect.width;
+      const scaleY = 480 / rect.height;
+
+      let zPressed = 0, xPressed = 0, cPressed = 0;
+
+      for (let i = 0; i < e.touches.length; i++) {
+        const touchX = (e.touches[i].clientX - rect.left) * scaleX;
+        const touchY = (e.touches[i].clientY - rect.top) * scaleY;
+
+        // Action Button Hitboxes
+        if (touchX >= state.zx && touchX <= state.zx + (27 * state.button_scale) &&
+            touchY >= state.zy && touchY <= state.zy + (29 * state.button_scale)) zPressed = 1;
+        if (touchX >= state.xx && touchX <= state.xx + (27 * state.button_scale) &&
+            touchY >= state.xy && touchY <= state.xy + (29 * state.button_scale)) xPressed = 1;
+        if (touchX >= state.cx && touchX <= state.cx + (27 * state.button_scale) &&
+            touchY >= state.cy && touchY <= state.cy + (29 * state.button_scale)) cPressed = 1;
+
+        // Joystick Drag Detection
+        const joyCenterX = state.analog_posx + ((59 * state.analog_scale) / 2);
+        const joyCenterY = state.analog_posy + ((59 * state.analog_scale) / 2);
+        const dist = Math.hypot(touchX - joyCenterX, touchY - joyCenterY);
+
+        if (dist <= (59 * state.analog_scale)) {
+          state.analog_center_x = touchX - ((20 * state.analog_scale) / 2);
+          state.analog_center_y = touchY - ((20 * state.analog_scale) / 2);
+
+          // Virtual Direction Triggers
+          triggerKey(38, touchY < joyCenterY - 12); // Up
+          triggerKey(40, touchY > joyCenterY + 12); // Down
+          triggerKey(37, touchX < joyCenterX - 12); // Left
+          triggerKey(39, touchX > joyCenterX + 12); // Right
+        }
+      }
+
+      if (keyState.Z !== zPressed) { keyState.Z = zPressed; triggerKey(90, zPressed === 1); }
+      if (keyState.X !== xPressed) { keyState.X = xPressed; triggerKey(88, xPressed === 1); }
+      if (keyState.C !== cPressed) { keyState.C = cPressed; triggerKey(67, cPressed === 1); }
+    }
+
+    function resetTouch(e) {
+      if (e.touches.length === 0) {
+        keyState.Z = 0; triggerKey(90, false);
+        keyState.X = 0; triggerKey(88, false);
+        keyState.C = 0; triggerKey(67, false);
+        triggerKey(37, false); triggerKey(38, false); triggerKey(39, false); triggerKey(40, false);
+
+        state.analog_center_x = state.analog_posx + (((59 * state.analog_scale) / 2) - ((20 * state.analog_scale) / 2));
+        state.analog_center_y = state.analog_posy + (((59 * state.analog_scale) / 2) - ((20 * state.analog_scale) / 2));
+      }
+    }
+
+    spriteSheet.onload = render;
+  </script>
+</body>
+</html>
